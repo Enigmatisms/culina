@@ -24,4 +24,9 @@ __host__ static void CheckCudaErrorAux (const char *file, unsigned line, const c
 	exit (1);
 }
 
+// convert the input to the nearest multiple of 32 (32, 64, 128, 256, 512)
+constexpr size_t ceil_mult32(size_t n) {
+    return (n % 32 == 0) ? n : ((n / 32) + 1) * 32;
+}
+
 }   // end namespace culin

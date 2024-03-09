@@ -15,6 +15,7 @@
 
 namespace culin {
 
+// ================== SFINAE ====================
 template<size_t Row, size_t Col, typename MatType>
 struct is_matching_matrix {
     static constexpr bool value = false;
@@ -25,24 +26,46 @@ struct is_matching_matrix<Row, Col, Matrix<Row, Col, Ty>> {
     static constexpr bool value = true;
 };
 
+template<typename Ty>
+struct is_logical_allowed {
+    static constexpr bool value = std::is_integral_v<Ty> || std::is_same_v<Ty, bool>;
+};
+
+#define ENABLE_IF_LOGICAL(Ty, enable) typename std::enable_if_t<enable || is_logical_allowed<Ty>::value>* = nullptr
+// ================== SFINAE ====================
+
 static constexpr int __stream_use = 8;
 
-
+// __global__ operator generator
 #define OPERATOR_OPS(op, func_name, Ty) \
-    __global__ void operator_##func_name(const Ty* const src1, const Ty* const src2, Ty* const dst) { \
-        ; \
+    __global__ void operator_##func_name(const Ty* const src1, const Ty* const src2, Ty* const dst, size_t col) { \
+        const size_t col_id = threadIdx.x, flat_index = blockIdx.x * col + col_id; \
+        if (col_id < col) { \
+            dst[flat_index] = src1[flat_index] op src2[flat_index]; \
+        } \
     }
 
 OPERATOR_OPS(+, add, float)
 OPERATOR_OPS(-, sub, float)
-OPERATOR_OPS(&, and, float)
-OPERATOR_OPS(|, or,  float)
-OPERATOR_OPS(^, xor, float)
+OPERATOR_OPS(+, sub, int)
+OPERATOR_OPS(-, sub, int)
+
+OPERATOR_OPS(&, and, int)
+OPERATOR_OPS(|, or,  int)
+OPERATOR_OPS(^, xor, int)
+OPERATOR_OPS(&, and, bool)
+OPERATOR_OPS(|, or,  bool)
+OPERATOR_OPS(^, xor, bool)
 
 // multiplcation is not included here
-// Macro should be used in operator_##kernel to generate different math ops
-#define BINARY_OPS_HELPER(op, func_name, Row, Col, Ty) \
-template <typename MatType> \
+/**
+ * `enable` should be true, when operator is + and - (operator will apply for float / int)
+ * when enable is false, ENABLE_IF_LOGICAL(enable, Ty) will only be true, if
+ * Ty is of integer type or bool type. i.e, for float and double, this operation will not
+ * be generated due to SFINAE
+*/ 
+#define BINARY_OPS_HELPER(op, func_name, Row, Col, Ty, enable) \
+template <typename MatType, ENABLE_IF_LOGICAL(enable, Ty)> \
 __host__ Matrix<Row, Col, Ty> operator##op(MatType&& mat) { \
     static_assert(is_numeric_v<MatType> || \
         is_matching_matrix<Row, Col, typename std::decay_t<MatType>>::value, \
@@ -61,8 +84,9 @@ __host__ Matrix<Row, Col, Ty> operator##op(MatType&& mat) { \
         cudaStreamDestroy(streams[i]); \
 }
 
-#define BINARY_OPS_INPLACE_HELPER(op, func_name, Row, Col, Ty) \
-template <typename MatType> \
+// enable should be true, when operator is + and - (operator will apply for float / int)
+#define BINARY_OPS_INPLACE_HELPER(op, func_name, Row, Col, Ty, enable) \
+template <typename MatType, ENABLE_IF_LOGICAL(enable, Ty)> \
 __host__ void operator##op(MatType&& mat) { \
     static_assert(is_numeric_v<MatType> || \
         is_matching_matrix<Row, Col, typename std::decay_t<MatType>>::value, \
@@ -99,20 +123,20 @@ public:
     */
     template <typename MatType>
     __host__ auto operator*(MatType&& mat) {
-
+        
     }
 
-    BINARY_OPS_HELPER(+, add, Row, Col, Ty)
-    BINARY_OPS_HELPER(-, sub, Row, Col, Ty)
-    BINARY_OPS_HELPER(&, and, Row, Col, Ty)
-    BINARY_OPS_HELPER(|, or,  Row, Col, Ty)
-    BINARY_OPS_HELPER(^, xor, Row, Col, Ty)
+    BINARY_OPS_HELPER(+, add, Row, Col, Ty, true)
+    BINARY_OPS_HELPER(-, sub, Row, Col, Ty, true)
+    BINARY_OPS_HELPER(&, and, Row, Col, Ty, false)
+    BINARY_OPS_HELPER(|, or,  Row, Col, Ty, false)
+    BINARY_OPS_HELPER(^, xor, Row, Col, Ty, false)
 
-    BINARY_OPS_INPLACE_HELPER(+, add, Row, Col, Ty)
-    BINARY_OPS_INPLACE_HELPER(-, sub, Row, Col, Ty)
-    BINARY_OPS_INPLACE_HELPER(&, and, Row, Col, Ty)
-    BINARY_OPS_INPLACE_HELPER(|, or,  Row, Col, Ty)
-    BINARY_OPS_INPLACE_HELPER(^, xor, Row, Col, Ty)
+    BINARY_OPS_INPLACE_HELPER(+, add, Row, Col, Ty, true)
+    BINARY_OPS_INPLACE_HELPER(-, sub, Row, Col, Ty, true)
+    BINARY_OPS_INPLACE_HELPER(&, and, Row, Col, Ty, false)
+    BINARY_OPS_INPLACE_HELPER(|, or,  Row, Col, Ty, false)
+    BINARY_OPS_INPLACE_HELPER(^, xor, Row, Col, Ty, false)
 
     // allocate CPU mem, copy memory from GPU to CPU then free GPU mem
     __host__ void to_cpu();
