@@ -7,16 +7,6 @@
 #include <random>
 #include "utils.h"
 
-__host__ static void CheckCudaErrorAux (const char *, unsigned, const char *, cudaError_t);
-#define CUDA_CHECK_RETURN(value) CheckCudaErrorAux(__FILE__,__LINE__, #value, value)
-
-__host__ static void CheckCudaErrorAux (const char *file, unsigned line, const char *statement, cudaError_t err) {
-	if (err == cudaSuccess)
-		return;
-	printf("%s returned %s(%d) at %s:%u\n", statement, cudaGetErrorString(err), err, file, line);
-	exit (1);
-}
-
 int next_multiple_of_32(int num) {
     int remainder = num % 32;
     if (remainder == 0)
@@ -61,6 +51,10 @@ __device__ __forceinline__ float warp_reduce_sum(float cur_thread_v, int warp_si
     return cur_thread_v;
 }
 
+/**
+ * TODO: modify the code and make it a block warp all reduce function (easy)
+ * address for the vector will be offset by blockIdx.x * blockDim.x
+*/
 template <typename Ty, int WarpSize = 32>
 __global__ void reduce_sum(const Ty* const vector, Ty* output, int length) {
     /**

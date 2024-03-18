@@ -9,12 +9,16 @@
 */
 
 #include "../utils.h"
+#include <omp.h>
 #include <random>
 #include <iostream>
 #include <cuda_runtime.h>
 
 // TODO: float4 in CUDA? How does it work?
 #define FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
+
+#define PINNED_MEMORY
+#define OMP_THREADS 8
 
 __host__ static void CheckCudaErrorAux (const char *, unsigned, const char *, cudaError_t);
 #define CUDA_CHECK_RETURN(value) CheckCudaErrorAux(__FILE__,__LINE__, #value, value)
@@ -41,7 +45,7 @@ __host__ static void CheckCudaErrorAux (const char *file, unsigned line, const c
 */ 
 
 template <int BM, int BN, int BK = 8, int CF = 8>
-__global__ float sgemm_kernel(
+__global__ void sgemm_kernel(
 	float* __restrict__ A, float* __restrict__ B, float* __restrict__ C, float alpha, float beta, 
 	int m, int n, int k) {
 	// tile size: 128 * 128 (for a block), a block contains 16 * 16 threads (a thread process 8 * 8 patch)
@@ -51,6 +55,7 @@ __global__ float sgemm_kernel(
 	// FIXME: I don't want to consider padding here! M, N, K will be the multiple of 128
 	__shared__ float tile_a[BM][BK], tile_b[BK][BN];				// transposed store
 	float local_c[CF][CF];											// how the thread local storage is allocated? using register?
+	memset((float*)local_c, 0, CF * CF * sizeof(float));
 	
 	beta = beta * BK / k;
 	// [step 1]: copy global mem to smem, 16 * 16 thread, 128 * 128 address: 4 for each, use FLOAT4
@@ -82,7 +87,7 @@ __global__ float sgemm_kernel(
 			for (int j = 0; j < CF; j++) {
 				float sum = 0;
 				#pragma unroll
-				for (int p = 0; p < BK; 8++)
+				for (int p = 0; p < BK; p++)
 					sum += tile_a[rbase + i][p] * tile_b[p][cbase + j];
 				local_c[i][j] += sum * alpha + C[gmem_addr_ci + j] * beta;			// mult by the scaling factor
 			}
@@ -116,7 +121,6 @@ void sgemm_host_caller(float* __restrict__ A, float* __restrict__ B, float* __re
 	dim3 grid(M / 128, N / 128);
 	sgemm_kernel<128, 128, 8, 8><<<grid, 256>>>(devA, devB, devC, alpha, beta, M, N, K);
 
-
 	// implicit synchronize
 	CUDA_CHECK_RETURN(cudaMemcpy(C, devC, sizeof(float) * M * N, cudaMemcpyDeviceToHost));
 
@@ -126,7 +130,7 @@ void sgemm_host_caller(float* __restrict__ A, float* __restrict__ B, float* __re
 }
 
 void sgemm_cpu_multi_threading(
-	float* __restrict__ A, float* __restrict__ B, float* __restrict__ C, 
+	float* A, float* B, float* C, 
 	float alpha, float beta, const int M, const int N, const int K
 ) {
 	#pragma omp parallel for num_threads(8)
@@ -145,7 +149,6 @@ float compare_result(
 	float* __restrict__ A, float* __restrict__ B, const int M, const int N
 ) {
 	float diff = 0;
-	#pragma omp parallel for num_threads(8) reduction(+:diff)
     for (int m = 0; m < M; m++) {
         for (int n = 0; n < N; n++) {
 			int addr = m * N + n;
@@ -155,47 +158,83 @@ float compare_result(
 	return diff / (M * N);
 }
 
-void generate_random_matrix(float* A, const int rows, const int cols) {
+void generate_random_matrix(float* mat, const int rows, const int cols) {
 	std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_real_distribution<float> dis(0, 5);
 	for (int i = 0; i < rows; i++) {
 		for (int j = 0; j < cols; j++) {
-			A[i * cols + j] = dis(gen);
+			mat[i * cols + j] = dis(gen);
 		}
 	}
 }
 
+void nan_checker(float* mat, const int rows, const int cols) {
+	int num_nan_inf = 0;
+	for (int i = 0; i < rows; i++) {
+		for (int j = 0; j < cols; j++) {
+			float val = mat[i * cols + j];
+			num_nan_inf += std::isnan(val) || std::isinf(val);
+		}	
+	}
+	printf("NaN ratio: %.3f%%\n", float(num_nan_inf) / float(rows * cols) * 100.f);
+}
+
 int main() {
+	omp_set_num_threads(OMP_THREADS);
 	int M = 4096, N = 2048, K = 512;
 
 	float alpha = 2.f, beta = 0.5f;
 	float *A, *B, *C, *D;
-	CUDA_CHECK_RETURN(cudaMallocHost(&A, sizeof(float) * M * K));
-	CUDA_CHECK_RETURN(cudaMallocHost(&B, sizeof(float) * K * N));
-	CUDA_CHECK_RETURN(cudaMallocHost(&C, sizeof(float) * M * N));
-	CUDA_CHECK_RETURN(cudaMallocHost(&D, sizeof(float) * M * N));
 
+	#ifdef PINNED_MEMORY
+		CUDA_CHECK_RETURN(cudaMallocHost(&A, sizeof(float) * M * K));
+		CUDA_CHECK_RETURN(cudaMallocHost(&B, sizeof(float) * K * N));
+		CUDA_CHECK_RETURN(cudaMallocHost(&C, sizeof(float) * M * N));
+		CUDA_CHECK_RETURN(cudaMallocHost(&D, sizeof(float) * M * N));
+	#else
+		A = new float [M * K];
+		B = new float [N * K];
+		C = new float [M * N];
+		D = new float [M * N];
+	#endif
+
+	printf("Generating random matrix A...\n");
 	generate_random_matrix(A, M, K);
+	printf("Generating random matrix B...\n");
 	generate_random_matrix(B, K, N);
+	printf("Generating random matrix C and D...\n");
 	generate_random_matrix(C, M, N);
 	memcpy(D, C, sizeof(float) * M * N);
 
 	TicToc timer;
 
+	printf("CPU SGEMM calculating.\n");
 	timer.tic();
 	sgemm_cpu_multi_threading(A, B, C, alpha, beta, M, N, K);
 	float cpu_time_ms = timer.toc();
+	printf("CPU SGEMM finished in %.5f ms.\n", cpu_time_ms);
+	nan_checker(C, M, N);
 
+	printf("GPU SGEMM calculating.\n");
 	timer.tic();
 	sgemm_host_caller(A, B, D, alpha, beta, M, N, K);
 	float gpu_time_ms = timer.toc();
+	printf("GPU SGEMM finished in %.5f ms.\n", gpu_time_ms);
+	nan_checker(D, M, N);
 
 	float diff = compare_result(C, D, M, N);
-	printf("GPU SGEMM: %f ms, CPU 8 threads: %f ms. MAE: %.5f\n", gpu_time_ms, cpu_time_ms, diff);
+	printf("GPU SGEMM: %f ms, CPU %d threads: %f ms. MAE: %.5f\n", gpu_time_ms, OMP_THREADS, cpu_time_ms, diff);
 
-	CUDA_CHECK_RETURN(cudaFree(A));
-	CUDA_CHECK_RETURN(cudaFree(B));
-	CUDA_CHECK_RETURN(cudaFree(C));
-	CUDA_CHECK_RETURN(cudaFree(D));
+	#ifdef PINNED_MEMORY
+		CUDA_CHECK_RETURN(cudaFreeHost(A));
+		CUDA_CHECK_RETURN(cudaFreeHost(B));
+		CUDA_CHECK_RETURN(cudaFreeHost(C));
+		CUDA_CHECK_RETURN(cudaFreeHost(D));
+	#else
+		delete [] A;
+		delete [] B;
+		delete [] C;
+		delete [] D;
+	#endif
 }
