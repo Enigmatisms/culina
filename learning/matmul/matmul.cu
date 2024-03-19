@@ -9,8 +9,6 @@
 */
 
 #include "../utils.h"
-#include <omp.h>
-#include <random>
 #include <iostream>
 #include <cuda_runtime.h>
 
@@ -18,17 +16,7 @@
 #define FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
 
 #define PINNED_MEMORY
-#define OMP_THREADS 8
-
-__host__ static void CheckCudaErrorAux (const char *, unsigned, const char *, cudaError_t);
-#define CUDA_CHECK_RETURN(value) CheckCudaErrorAux(__FILE__,__LINE__, #value, value)
-
-__host__ static void CheckCudaErrorAux (const char *file, unsigned line, const char *statement, cudaError_t err) {
-	if (err == cudaSuccess)
-		return;
-	printf("%s returned %s(%d) at %s:%u\n", statement, cudaGetErrorString(err), err, file, line);
-	exit (1);
-}
+#define OMP_THREADS 64
 
 /**
  * alpha * AB + beta * c
@@ -133,7 +121,7 @@ void sgemm_cpu_multi_threading(
 	float* A, float* B, float* C, 
 	float alpha, float beta, const int M, const int N, const int K
 ) {
-	#pragma omp parallel for num_threads(8)
+	#pragma omp parallel for num_threads(OMP_THREADS)
     for (int m = 0; m < M; m++) {
         for (int n = 0; n < N; n++) {
             float psum = 0.0;
@@ -143,41 +131,6 @@ void sgemm_cpu_multi_threading(
             C[m * N + n] = C[m * N + n] * beta + psum * alpha;
         }
     }
-}
-
-float compare_result(
-	float* __restrict__ A, float* __restrict__ B, const int M, const int N
-) {
-	float diff = 0;
-    for (int m = 0; m < M; m++) {
-        for (int n = 0; n < N; n++) {
-			int addr = m * N + n;
-			diff += fabsf(A[addr] - B[addr]);
-        }
-    }
-	return diff / (M * N);
-}
-
-void generate_random_matrix(float* mat, const int rows, const int cols) {
-	std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> dis(0, 5);
-	for (int i = 0; i < rows; i++) {
-		for (int j = 0; j < cols; j++) {
-			mat[i * cols + j] = dis(gen);
-		}
-	}
-}
-
-void nan_checker(float* mat, const int rows, const int cols) {
-	int num_nan_inf = 0;
-	for (int i = 0; i < rows; i++) {
-		for (int j = 0; j < cols; j++) {
-			float val = mat[i * cols + j];
-			num_nan_inf += std::isnan(val) || std::isinf(val);
-		}	
-	}
-	printf("NaN ratio: %.3f%%\n", float(num_nan_inf) / float(rows * cols) * 100.f);
 }
 
 int main() {
