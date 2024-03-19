@@ -34,7 +34,7 @@ float compare_result(
 	float* A, float* B, const int M, const int N
 ) {
 	float diff = 0;
-	#pragma omp parallel for num_threads(16) reduction(:+diff)
+	#pragma omp parallel for num_threads(16) reduction(+: diff)
     for (int m = 0; m < M; m++) {
         for (int n = 0; n < N; n++) {
 			int addr = m * N + n;
@@ -57,6 +57,7 @@ void generate_random_matrix(float* mat, const int rows, const int cols) {
 
 void nan_checker(float* mat, const int rows, const int cols) {
 	int num_nan_inf = 0;
+	#pragma omp parallel for num_threads(16) reduction(+: num_nan_inf)
 	for (int i = 0; i < rows; i++) {
 		for (int j = 0; j < cols; j++) {
 			float val = mat[i * cols + j];
