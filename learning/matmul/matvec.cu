@@ -13,7 +13,7 @@
 #include <cuda_runtime.h>
 
 #define SGEMV_TEST 1
-#define OMP_THREADS 1
+#define OMP_THREADS 16
 #define FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
 
 __device__ __forceinline__ float warp_reduce(float value, int start_mask = 16) {
@@ -77,6 +77,14 @@ __global__ void sgemv_kernel_long_vec4(float* A, float* p, float* v, int cols) {
         if (threadIdx.x == 0)
             v[blockIdx.x] = value;
     }
+    // ======== actually, since the warp reduced part (second) is too small, there is almost no speed difference =====
+    // if (threadIdx.x == 0) {
+    //     float result = 0;
+    //     for (int i = 0; i < 8; i++) {
+    //         result += reduced[i];
+    //     }
+    //     v[blockIdx.x] = value;
+    // }
 } 
 
 __global__ void sgemv_kernel_naive(float* A, float* p, float* v, int cols) {
