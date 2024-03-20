@@ -31,3 +31,6 @@ target_link_libraries(matmul pthread OpenMP::OpenMP_CXX)
 
 add_executable(vecmat ./matvec.cu)
 target_link_libraries(vecmat pthread OpenMP::OpenMP_CXX)
+
+add_executable(dotprod ./dot_product.cu)
+target_link_libraries(dotprod pthread OpenMP::OpenMP_CXX)

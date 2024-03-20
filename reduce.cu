@@ -41,14 +41,14 @@ __device__ __forceinline__ float warp_reduce_max(float cur_thread_v, int warp_si
     return cur_thread_v;
 }
 
-__device__ __forceinline__ float warp_reduce_sum(float cur_thread_v, int warp_size = 32) {
-    // warp reduce sum: via CUDA intrinsics
-    for (int mask = warp_size >> 1; mask >= 1; mask >>= 1) {
-        int float_int = __float_as_int(cur_thread_v);
-        int recv_float = __shfl_xor_sync(0xffffffff, float_int, mask, warp_size);
-        cur_thread_v += __int_as_float(recv_float);
+__device__ __forceinline__ float warp_reduce_sum(float value, int start_mask = 32) {
+    #pragma unroll
+    for (int mask = start_mask >> 1; mask >= 1; mask >>= 1) {
+        int float_int = __float_as_int(value);
+        float_int = __shfl_xor_sync(0xffffffff, float_int, mask);
+        value += __int_as_float(float_int);
     }
-    return cur_thread_v;
+    return value;
 }
 
 /**
@@ -167,6 +167,6 @@ void call_reduce_sum() {
 
 
 int main() {
-    call_reduce_sum<int, 999>();
+    call_reduce_sum<float, 32>();
     return 0;
 }
