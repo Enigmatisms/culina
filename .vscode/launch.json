@@ -8,7 +8,7 @@
             "name": "(gdb) debug",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/learning/thread_pool/build/bf",
+            "program": "${workspaceFolder}/matmul/build/trans",
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
             "args": [],

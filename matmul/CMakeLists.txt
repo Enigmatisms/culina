@@ -34,3 +34,6 @@ target_link_libraries(vecmat pthread OpenMP::OpenMP_CXX)
 
 add_executable(dotprod ./dot_product.cu)
 target_link_libraries(dotprod pthread OpenMP::OpenMP_CXX)
+
+add_executable(trans ./transpose.cu)
+target_link_libraries(trans pthread OpenMP::OpenMP_CXX)

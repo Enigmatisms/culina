@@ -41,28 +41,28 @@ __global__ void sgemm_kernel(
 	// BM: tile size (M), BN: tile size: N, BK: tile size K
 	// CF: coarsening factor = 8
 	// FIXME: I don't want to consider padding here! M, N, K will be the multiple of 128
-	__shared__ float tile_a[BM][BK], tile_b[BK][BN];				// transposed store
+	__shared__ float tile_a[BM][BK];
+	__shared__ float tile_b[BK][BN];				// transposed store
 	float local_c[CF][CF];											// how the thread local storage is allocated? using register?
 	memset((float*)local_c, 0, CF * CF * sizeof(float));
 	
 	beta = beta * BK / k;
 	// [step 1]: copy global mem to smem, 16 * 16 thread, 128 * 128 address: 4 for each, use FLOAT4
-	int tid = threadIdx.x;
 	// smem 2D address
 	int gmem_base_a = (blockIdx.x << 7) * k, gmem_base_b = blockIdx.y << 7;
-	int rbase = (tid >> 4) << 3, cbase = (tid % 16) << 3;
+	int rbase = (threadIdx.x >> 4) << 3, cbase = (threadIdx.x % 16) << 3;
 
 	// locate the memory address in C (to be stored to, and load from (beta scaling))
 	int gmem_addr_c = ((blockIdx.x * n + blockIdx.y) << 7) + rbase * n + cbase;
 	
 	// for k / BK patches in a row-patch / col-patch
 	for (int kid = 0; kid < k / BK; kid ++) {
-		int tile_r = tid >> 1, tile_c = (tid % 2) << 2;
+		int tile_r = threadIdx.x >> 1, tile_c = (threadIdx.x % 2) << 2;
 		int gmem_addr = gmem_base_a + (kid << 3) + tile_r * k + tile_c;			// 128 * blockIdx.x is row, (kid << 3) is column
 		// load A patch
 		FLOAT4(tile_a[tile_r][tile_c]) = FLOAT4(A[gmem_addr]);
-		tile_r = tid >> 5;
-		tile_c = (tid % 32) * 4;
+		tile_r = threadIdx.x >> 5;
+		tile_c = (threadIdx.x % 32) * 4;
 		gmem_addr = gmem_base_b + ((kid << 3) + tile_r) * n + tile_c;
 		// load B patch
 		FLOAT4(tile_b[tile_r][tile_c]) = FLOAT4(B[gmem_addr]);
