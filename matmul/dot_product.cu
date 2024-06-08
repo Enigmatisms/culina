@@ -58,7 +58,7 @@ float dot_prod_host_caller(float* __restrict__ a, float* __restrict__ b, float& 
 
     TicToc timer;
     timer.tic();
-    constexpr int num_threads = 128;
+    constexpr int num_threads = 256;
     dot_prod_kernel_long<num_threads><<<length / (num_threads << 2), num_threads>>>(dev_a, dev_b, dev_res);
     CUDA_CHECK_RETURN(cudaDeviceSynchronize());
     float elapsed = timer.toc();
@@ -85,7 +85,7 @@ int main() {
     // todo
 
     omp_set_num_threads(OMP_THREADS);
-	int N = 2097152;
+	int N = 33554432 * 2;
 
 	float *a, *b;
 

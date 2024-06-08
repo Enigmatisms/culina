@@ -44,9 +44,7 @@ __global__ void sgemm_kernel(
 	__shared__ float tile_a[BM][BK];
 	__shared__ float tile_b[BK][BN];				// transposed store
 	float local_c[CF][CF];											// how the thread local storage is allocated? using register?
-	memset((float*)local_c, 0, CF * CF * sizeof(float));
 	
-	beta = beta * BK / k;
 	// [step 1]: copy global mem to smem, 16 * 16 thread, 128 * 128 address: 4 for each, use FLOAT4
 	// smem 2D address
 	int gmem_base_a = (blockIdx.x << 7) * k, gmem_base_b = blockIdx.y << 7;
@@ -54,6 +52,14 @@ __global__ void sgemm_kernel(
 
 	// locate the memory address in C (to be stored to, and load from (beta scaling))
 	int gmem_addr_c = ((blockIdx.x * n + blockIdx.y) << 7) + rbase * n + cbase;
+
+	for (int i = 0; i < CF; i++) {
+		int gmem_addr_ci = gmem_addr_c + i * n;
+		FLOAT4(local_c[i][0]) = FLOAT4(C[gmem_addr_ci]);
+		FLOAT4(local_c[i][4]) = FLOAT4(C[gmem_addr_ci + 4]);
+		for (int j = 0; j < CF; j++)
+			local_c[i][j] *= beta;
+	}
 	
 	// for k / BK patches in a row-patch / col-patch
 	for (int kid = 0; kid < k / BK; kid ++) {
@@ -64,20 +70,20 @@ __global__ void sgemm_kernel(
 		tile_r = threadIdx.x >> 5;
 		tile_c = (threadIdx.x % 32) * 4;
 		gmem_addr = gmem_base_b + ((kid << 3) + tile_r) * n + tile_c;
-		// load B patch
+		// load B patch: this might get improved by making it storing in a transposed way
 		FLOAT4(tile_b[tile_r][tile_c]) = FLOAT4(B[gmem_addr]);
 		__syncthreads();
 
 		// [step 2]: thread compute and store to local_c (register usage contained), with thread coarsening
 		// compute CF * CF (8 * 8 in our case) and store to local_c
 		for (int i = 0; i < CF; i++) {
-			int gmem_addr_ci = gmem_addr_c + i * n;
 			for (int j = 0; j < CF; j++) {
 				float sum = 0;
 				#pragma unroll
-				for (int p = 0; p < BK; p++)
-					sum += tile_a[rbase + i][p] * tile_b[p][cbase + j];
-				local_c[i][j] += sum * alpha + C[gmem_addr_ci + j] * beta;			// mult by the scaling factor
+				for (int p = 0; p < BK; p++) {
+					sum = fmaf(tile_a[rbase + i][p], tile_b[p][cbase + j], sum);
+				}
+				local_c[i][j] += sum * alpha;			// mult by the scaling factor
 			}
 		}
 		__syncthreads();
@@ -87,11 +93,8 @@ __global__ void sgemm_kernel(
 	#pragma unroll
 	for (int i = 0; i < CF; i++) {
 		int gmem_addr_ci = gmem_addr_c + i * n;
-		// can be optimized by FLOAT4
-		#pragma unroll
-		for (int j = 0; j < CF; j += 4) {
-			FLOAT4(C[gmem_addr_ci + j]) = FLOAT4(local_c[i][j]);
-		}
+		FLOAT4(C[gmem_addr_ci])     = FLOAT4(local_c[i][0]);
+		FLOAT4(C[gmem_addr_ci + 4]) = FLOAT4(local_c[i][4]);
 	} 
 }
 
@@ -135,7 +138,7 @@ void sgemm_cpu_multi_threading(
 
 int main() {
 	omp_set_num_threads(OMP_THREADS);
-	int M = 4096, N = 2048, K = 512;
+	int M = 4096, N = 2048, K = 1024;
 
 	float alpha = 2.f, beta = 0.5f;
 	float *A, *B, *C, *D;
