@@ -22,12 +22,18 @@ if (OPENMP_FOUND)
   message(STATUS ${OpenMP_CXX_FLAGS})
 endif()
 
+find_package(CUDA REQUIRED)
+list(APPEND CUDA_LIBRARIES ${CUDA_cublas_LIBRARY})
+
 include_directories(
     ${CMAKE_SOURCE_DIR}/../
 )
 
+add_executable(sgemm ./sgemm.cu)
+target_link_libraries(sgemm pthread OpenMP::OpenMP_CXX ${CUDA_LIBRARIES})
+
 add_executable(matmul ./matmul.cu)
-target_link_libraries(matmul pthread OpenMP::OpenMP_CXX)
+target_link_libraries(matmul pthread OpenMP::OpenMP_CXX ${CUDA_LIBRARIES})
 
 add_executable(vecmat ./matvec.cu)
 target_link_libraries(vecmat pthread OpenMP::OpenMP_CXX)
