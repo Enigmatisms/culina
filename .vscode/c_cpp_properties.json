@@ -3,7 +3,8 @@
         {
             "name": "Linux",        
             "includePath": [
-                "${workspaceFolder}/culin/include/**",
+                "${workspaceFolder}/src/",
+                "${workspaceFolder}/src/**",
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",

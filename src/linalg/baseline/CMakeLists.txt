@@ -26,7 +26,7 @@ find_package(CUDA REQUIRED)
 list(APPEND CUDA_LIBRARIES ${CUDA_cublas_LIBRARY})
 
 include_directories(
-    ${CMAKE_SOURCE_DIR}/../
+    ${CMAKE_SOURCE_DIR}/../../
 )
 
 add_executable(sgemm ./sgemm.cu)

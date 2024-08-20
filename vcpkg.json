@@ -1,0 +1,10 @@
+{
+    "name": "culina",
+    "version": "1.0.0",
+    "dependencies": [
+      {
+        "name": "libtorch",
+        "features": ["cuda"]
+      }
+    ]
+  }

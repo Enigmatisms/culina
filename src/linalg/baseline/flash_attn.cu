@@ -10,7 +10,7 @@
  * @date:   2024.3.20
 */
 
-#include "../utils.h"
+#include "utils.h"
 #include <iostream>
 #include <cuda_runtime.h>
 

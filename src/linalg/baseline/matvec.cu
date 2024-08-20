@@ -7,7 +7,7 @@
  * for small N (< 128), one block might need to process more than one row
 */
 
-#include "../utils.h"
+#include "utils.h"
 #include <random>
 #include <iostream>
 #include <cuda_runtime.h>

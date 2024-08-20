@@ -3,7 +3,7 @@
  * long and vec4 (131072) -> (128 block, 256 threads, reduce 8 -> reduce 1)
 */
 
-#include "../utils.h"
+#include "utils.h"
 #include <random>
 #include <iostream>
 #include <cuda_runtime.h>

@@ -8,11 +8,10 @@
  * @date:   2024-3-18
 */
 
-#include "../utils.h"
+#include "utils.h"
 #include <cstring>
 #include <iostream>
 #include <cuda_runtime.h>
-#include "../utils.h"
 
 #define FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
 #define FLOAT4_CONST(pointer) (reinterpret_cast<const float4*>(&(pointer))[0])
