@@ -4,7 +4,7 @@
             "name": "Linux",        
             "includePath": [
                 "${workspaceFolder}/src/",
-                "${workspaceFolder}/src/**",
+                "${workspaceFolder}/src/**"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",
@@ -19,7 +19,8 @@
                 "${workspaceFolder}\\src\\",
                 "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.1\\include",
                 "E:\\libtorch\\include\\**",
-                "E:\\libtorch\\include\\torch\\csrc\\api\\include"
+                "E:\\libtorch\\include\\torch\\csrc\\api\\include",
+                "E:\\Anaconda\\envs\\ti\\include"
             ],
             "defines": ["USE_SOA"],
             "intelliSenseMode": "windows-msvc-x64",
