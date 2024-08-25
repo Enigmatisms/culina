@@ -17,7 +17,6 @@ include_directories(.)
 add_executable(tp main.cc
     thread_pool.cc
 )
-target_link_libraries(tp pthread)
+add_executable(new_tp new_thread_pool.cc)
 
 add_executable(bf double_buffer.cc)
-target_link_libraries(bf pthread)
