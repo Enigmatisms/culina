@@ -1,3 +1,9 @@
+"""
+    Multi-head attention remastered with 5min
+    @author: Qianyue He
+    @date:   2024.8.26
+"""
+
 import torch
 import numpy as np
 

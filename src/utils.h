@@ -3,6 +3,9 @@
 #include <chrono>
 #include <random>
 #include <iostream>
+#include <vector_types.h>
+#define FLOAT4(x) *reinterpret_cast<float4*>(&x)
+#define CONST_FLOAT4(x) *reinterpret_cast<const float4*>(&x)
 
 #ifndef NO_CUDA
 __host__ static void CheckCudaErrorAux (const char *, unsigned, const char *, cudaError_t);

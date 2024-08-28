@@ -1,31 +1,98 @@
 #include <iostream>
 #include <cuda_runtime.h>
-#include <torch/extension.h>
 #include "utils.h"
 
-#define FLOAT4(x) *reinterpret_cast<float4*>(&x)
-#define CONST_FLOAT4(x) *reinterpret_cast<const float4*>(&x)
-
 /**
- * 2D 大型矩阵乘法。naive 方法是很简单的，但是存在 global memory 访问过多 + uncoalesced memory 过多的问题
- * 这里所需要实现的矩阵乘法是分块矩阵乘，包含 thread coarsening 以及 shared memory, local register 的使用
- * 这里我们假设 coarsening 的系数是 8，也即一个线程处理 8 * 8 的区域，256 线程
- * A * B，A 每次处理 128 行 * 16 列 （每个线程处理 8 个 float），B 取出 (16 * 128)，最后得到 128 * 128 的 patch
- * 每个线程负责自己的 8 * 8 (一共 16 * 16 = 256 个 patch)，加至对应的输出上即可，
- * 逻辑：
+ * General Matrix - Matrix multiplication (with offset)
+ * The original method will have shared memory access problem
  * 
- * 128 * 8 取块操作需要循环，一个 block 处理一整条（和列），对应了 列 / 8  或者行 / 8 （中间的 shape）
- * 线程：取 A 到 shared_mem (128 行，两列 8 float)，最好是 coalesced 的形式
- * 线程: 取 B 到 shared_mem (128 列，8行)，最好直接转置, global 取时取连续的 8 个但存放时竖着存（会有 L1 uncoalesced 访问，但估计还好？）
- * 
- * 现在有 128 * 8 的 sa, 以及 128 * 8 的 sb，计算时：
- * 根据 16 的余数与 16 的整除确定 shared memory 的访问位置
- * local 开辟 8 * 8 结果存储区
- * 
- * 剩下的操作就没什么难的了。输出可以直接输出到 C，因为每一块都是串行的（k 上）
- * 这里剩下的优化操作就是怎么避免 bank conflict 以及怎么 double buffering 了
- * 
+ * (M * K) @ (K * N) Matrix multiplication
 */
-__global__ void sgemm_kernel() {
 
+template <int M, int K, int N>
+__global__ void sgemm_kernel(
+    const float* const __restrict__ A, 
+    const float* const __restrict__ B,
+    float* const __restrict__ C,
+    float alpha = 1.f, float beta = 1.f
+) {
+    // each block will have 256 threads and each block takes 128 * CF(8) from A and the same from B
+    // forming a 128 * 128 patch (each thread takes 8 * 8, 16 rows and 16 cols)
+    // different block process different rows and cols
+    // we will have a 2D block
+    constexpr int num_patches = K / CF;
+    constexpr int BSize = 128;
+    constexpr int CF    = 8;
+    // CF: coarsening factor: 8 --- a thread will process 8 * 8 patch
+    const int a_row_base = blockIdx.y * BSize, b_col_base = blockIdx.x * BSize;
+    const int a_row = threadIdx.x >> 1, a_col = (threadIdx.x & 1) << 2;
+    const int b_row = a_row >> 4,       b_col = (threadIdx.x % 32) << 2;
+    const int c_row = (threadIdx.x >> 4) << 3, c_col = (threadIdx.x % 16) << 3;
+
+    // there might be 8 way bank conflict, try to optimize this
+    __shared__ smem_a[BSize][CF];          // this is the base implementation (there will be global mem excessive -- A lot)
+    __shared__ smem_b[BSize][CF];          // can we directly store the transposed B patch? 
+    // Yes, this will result in loading time L1 cache excessive, yet it is good for later computation
+
+    // smem_a: (16 * 8) * 8, the same for smem_b, use c_row and c_col to index smem_a and smem_b
+
+    float storage[CF][CF] = {0.f};
+
+    #pragma unroll
+    for (int k = 0; k < num_patches; k++) {
+        int a_th_base = a_row_base + a_row * K + k * CF + a_col;        // the A memory this thread needs to read from
+        int b_th_base = (k * CF + b_row) * N + b_col_base + b_col;        // the A memory this thread needs to read from
+        // uncoalesced memory access (8 transactions to complete)
+        FLOAT4(smem_a[a_row][a_col]) = CONST_FLOAT4(A[a_th_base]);
+        // coalesced memory access (128 float per row, one thread in a warp loads 4 -> one transaction with LDG.128)
+        float4 b_float4 = CONST_FLOAT4(B[b_th_base]);
+        // 8 way bank conflict, try to optimize this
+        smem_b[b_col + 0][b_row] = b_float4.x;
+        smem_b[b_col + 1][b_row] = b_float4.y;
+        smem_b[b_col + 2][b_row] = b_float4.z;
+        smem_b[b_col + 3][b_row] = b_float4.w;
+        __syncthreads();
+
+        // calculate patch result
+        #pragma unroll
+
+        for (int i = 0; i < CF; i++) {
+            float4 row_f = CONST_FLOAT4(smem_a[c_row + i][0]);
+            float4 row_b = CONST_FLOAT4(smem_a[c_row + i][4]);
+            #pragma unroll
+            for (int j = 0; j < CF; j++) {
+                float4 col_f = CONST_FLOAT4(smem_a[c_row + i][0]);
+                float4 col_b = CONST_FLOAT4(smem_a[c_row + i][4]);
+                // come on nvcc, do find FMA for me, fuse them!
+                storage[i][j] += row_f.x * col_f.x + row_f.y * col_f.y + \
+                                 row_f.z * col_f.z + row_f.w * col_f.w + \
+                                 row_b.x * col_b.x + row_b.y * col_b.y + \
+                                 row_b.z * col_b.z + row_b.w * col_b.w;
+            }
+        }
+        __syncthreads();
+    }   
+    const int global_c_row = a_row_base + c_row, global_c_col = b_col_base + c_col;
+
+    // local patch finished, add the result to C and scale C
+    #pragma unroll
+    for (int i = 0; i < CF; i++) {
+        int c_addr_base = (global_c_row + i) * N + global_c_col;
+        float4 c_row_f = CONST_FLOAT4(C[c_addr_base + 0]);
+        float4 c_row_b = CONST_FLOAT4(C[c_addr_base + 4]);
+        c_row_f.x = c_row_f.x * beta + alpha * storage[i][0];
+        c_row_f.y = c_row_f.y * beta + alpha * storage[i][1];
+        c_row_f.z = c_row_f.z * beta + alpha * storage[i][2];
+        c_row_f.w = c_row_f.w * beta + alpha * storage[i][3];
+
+        c_row_b.x = c_row_b.x * beta + alpha * storage[i][4];
+        c_row_b.y = c_row_b.y * beta + alpha * storage[i][5];
+        c_row_b.z = c_row_b.z * beta + alpha * storage[i][6];
+        c_row_b.w = c_row_b.w * beta + alpha * storage[i][7];
+        FLOAT4(C[c_addr_base + 0]) = c_row_f;
+        FLOAT4(C[c_addr_base + 4]) = c_row_b;
+    }
+    // The current version is much more understandable
 }
+
+// TODO: need PyTorch bindings for testing
