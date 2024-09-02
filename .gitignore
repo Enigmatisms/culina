@@ -1,3 +1,4 @@
 **/build
 **/*.pyd
 **/*.egg
+**/__pycache__
